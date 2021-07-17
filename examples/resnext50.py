@@ -1,6 +1,6 @@
 import taso as ts
 import onnx
-
+print("BLA BLA")
 def resnext_block(graph, input, strides, out_channels, groups):
     w1 = graph.new_weight(dims=(out_channels,input.dim(1),1,1))
     t = graph.conv2d(input=input, weight=w1,
