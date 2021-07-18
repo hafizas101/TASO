@@ -67,7 +67,7 @@ with open('synset.txt', 'r') as f:
 
 
 # Enter path to the ONNX model file
-model_path= 'squeezenet1.1.onnx'
+model_path= 'squeezenet1.1.onnx.taso.onnx'
 sym, arg_params, aux_params = import_model(model_path)
 
 
