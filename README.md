@@ -1,4 +1,4 @@
-# TASO: A Tensor Algebra SuperOptimizer for Deep Learning
+# TASO: The Tensor Algebra SuperOptimizer for Deep Learning
 
 TASO optimizes the computation graphs of DNN models using automatically generated and verified graph transformations.
 For an arbitrary DNN model, TASO uses the auto-generated graph transformations to build a large search space of potential computation graphs that are equivalent to the original DNN model.
@@ -11,7 +11,7 @@ TASO outperforms the graph optimizers in existing deep learning frameworks by [u
 
 ## Install TASO
 
-See [instructions](https://github.com/jiazhihao/TASO/blob/master/INSTALL.md) to install TASO from source.
+See [instructions](INSTALL.md) to install TASO from source.
 We also provide prebuilt [docker images](https://github.com/jiazhihao/TASO/blob/master/INSTALL.md) with all dependencies pre-installed.
 
 ## Use TASO
@@ -80,7 +80,7 @@ w1 = graph.new_weight(dims=(128,128,3,3))
 w2 = graph.new_weight(dims=(128,128,1,1))
 w3 = graph.new_weight(dims=(128,128,3,3))
 left = graph.conv2d(input=input, weight=w1, strides=(1,1), padding="SAME", activation="RELU")
-left = graph.conv2d(input=input, weight=w3, strides=(1,1), padding="SAME")
+left = graph.conv2d(input=left, weight=w3, strides=(1,1), padding="SAME")
 right = graph.conv2d(input=input, weight=w2, strides=(1,1), padding="SAME", activation="RELU")
 output = graph.add(left, right)
 output = graph.relu(output)
@@ -92,7 +92,7 @@ onnx.save(onnx_model, "/path/to/save/new/onnx/model")
 ```
 
 ## Publication
-* Zhihao Jia, Oded Padon, James Thomas, Todd Warszawski, Matei Zaharia, and Alex Aiken. [TASO: Optimizing Deep Learning Computation with Automated Generation of Graph Substitutions](http://theory.stanford.edu/~aiken/publications/papers/sosp19.pdf). In Proceedings of the Symposium on Operating Systems Principles (SOSP), Ontario, Canada, October 2019.
+* Zhihao Jia, Oded Padon, James Thomas, Todd Warszawski, Matei Zaharia, and Alex Aiken. [TASO: Optimizing Deep Learning Computation with Automated Generation of Graph Substitutions](https://cs.stanford.edu/~zhihao/papers/sosp19.pdf). In Proceedings of the Symposium on Operating Systems Principles (SOSP), Ontario, Canada, October 2019.
 
 * Zhihao Jia, James Thomas, Todd Warszawski, Mingyu Gao, Matei Zaharia, and Alex Aiken. [Optimizing DNN Computation with Relaxed Graph Substitutions](https://theory.stanford.edu/~aiken/publications/papers/sysml19b.pdf). In Proceedings of the Conference on Systems and Machine Learning (SysML), Palo Alto, CA, April 2019.
 

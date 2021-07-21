@@ -108,6 +108,20 @@ void Matmul::forward(bool block)
     checkCUDA(cudaDeviceSynchronize());
 }
 
+void Matmul::set_layout(void)
+{
+  // CuBLAS uses column-major.
+  int numDim = outputs[0].numDim;
+  outputs[0].stride[numDim-2] = 1;
+  outputs[0].stride[numDim-1] = outputs[0].dim[numDim-2];
+  int size = outputs[0].dim[numDim-2] * outputs[0].dim[numDim-1];
+  for (int i = numDim-3; i >= 0; i--) {
+    outputs[0].stride[i] = size;
+    size *= outputs[0].dim[i];
+  }
+  assert(size == outputs[0].volume());
+}
+
 void Model::measure_matmul_cost(Matmul* mm)
 {
   const float alpha = 1.0f;
@@ -118,19 +132,19 @@ void Model::measure_matmul_cost(Matmul* mm)
   int k = mm->inputs[0].dim[numDim-1];
   cublasOperation_t transA, transB;
   int lda, ldb, ldc;
-  if (mm->inputs[0].stride[numDim-2] == 1) {
+  if (mm->inputs[0].stride[numDim-2] == 1 && mm->inputs[0].stride[numDim-1] >= m) {
     transA = CUBLAS_OP_N;
     lda = mm->inputs[0].stride[numDim-1];
   } else {
-    assert(mm->inputs[0].stride[numDim-1] == 1);
+    assert(mm->inputs[0].stride[numDim-1] == 1 && mm->inputs[0].stride[numDim-2] >= k);
     transA = CUBLAS_OP_T;
     lda = mm->inputs[0].stride[numDim-2];
   }
-  if (mm->inputs[1].stride[numDim-2] == 1) {
+  if (mm->inputs[1].stride[numDim-2] == 1 && mm->inputs[1].stride[numDim-1] >= k) {
     transB = CUBLAS_OP_N;
     ldb = mm->inputs[1].stride[numDim-1];
   } else {
-    assert(mm->inputs[1].stride[numDim-1] == 1);
+    assert(mm->inputs[1].stride[numDim-1] == 1 && mm->inputs[1].stride[numDim-2] >= n);
     transB = CUBLAS_OP_T;
     ldb = mm->inputs[1].stride[numDim-2];
   }

@@ -28,8 +28,13 @@
 using namespace nvinfer1;
 #endif
 
-#ifdef USE_MKL
-#include "mkl_dnn.h"
+#ifdef USE_DNNL
+#include "dnnl.hpp"
+
+// FIXME: check DNNL_VERSION_MAJOR/MINOR
+#define DNNL_NO_MATMUL
+
+using DNNLNet = std::vector<std::pair<dnnl::primitive, std::unordered_map<int, dnnl::memory>>>;
 #endif
 
 #include <cassert>
@@ -49,7 +54,6 @@ namespace taso {
 #define MAX_NUM_SPLITS 32
 #define MAX_NUM_INPUTS 6
 #define MAX_NUM_OUTPUTS 6
-#define BATCH_SIZE 1
 #define MAX_TENSOR_SIZE 512 * 1024 * 1024 // 512MB
 #define REPEAT_TIMES 32
 #define WARMUP_TIMES 8
@@ -125,6 +129,11 @@ enum OpType {
   OP_LEAKYRELU,
   OP_SLICE, //https://github.com/onnx/onnx/blob/master/docs/Operators.md#Slice
   OP_RESIZE, //https://github.com/onnx/onnx/blob/master/docs/Operators.md#Resize
+  OP_PRELU, //https://github.com/onnx/onnx/blob/master/docs/Operators.md#PRelu
+  OP_FUSE_CONV_BATCHNORM,
+  OP_FUSE_CONV_BATCHNORM_ALPHA_VAR,
+  OP_FUSE_CONV_BATCHNORM_BIAS,
+  OP_BROADCAST_ADD
 };
 
 struct Op {
@@ -144,7 +153,7 @@ struct Op {
   inline bool operator<(const Op& b) const {
     if (guid != b.guid) return guid < b.guid;
     if (ptr != b.ptr) return ptr < b.ptr;
-    return true;
+    return false;
   }
   Op& operator=(const Op& op)
   {
@@ -246,7 +255,7 @@ struct SplitInfo {
     while (idx < num && pos[idx] < mid)
       left.pos[left.num++] = pos[idx++];
     while (idx < num - 1)
-      right.pos[right.num++] = pos[idx++];
+      right.pos[right.num++] = pos[idx++] - mid;
   }
   void combine(const SplitInfo& next) {
     if (num != next.num)
@@ -349,6 +358,7 @@ struct Tensor {
     }
     return true;
   }
+
   //bool operator==(const Tensor& b);
   int numDim, dim[MAX_DIM], stride[MAX_DIM];
   int idx; // idx is used for Ops with multiple outputs (e.g., split)
@@ -391,6 +401,7 @@ enum PMParameter {
   PM_MERGE_GCONV_COUNT, // MergeGConv
   PM_AXES,		// Squeeze, Unsqueeze, Reduce*
   PM_KEEP_DIMS,         // Reduce*
+  PM_EPSILON,   // BatchNorm
 };
 
 enum TNParameter {
@@ -421,7 +432,7 @@ enum ActiMode {
   AC_MODE_NONE,
   AC_MODE_SIGMOID,
   AC_MODE_RELU,
-  AC_MODE_TANH, 
+  AC_MODE_TANH,
 };
 
 //That this must be consistent with python/taso/_cython/CCore.pxd
@@ -448,13 +459,15 @@ public:
          Model* _model, OpType _type);
   OpBase(const Tensor& input0, const Tensor& input1, const Tensor& input2,
          Model* _model, OpType _type);
+  OpBase(const Tensor& input0, const Tensor& input1, const Tensor& input2,
+         const Tensor& input3, Model* _model, OpType _type);
   OpBase(const Tensor& input0, const Tensor& input1,
          const Tensor& input2, const Tensor& input3,
          const Tensor& input4, Model* _model, OpType _type);
   OpBase(int n, Tensor* inputs, Model* _model, OpType _type);
   virtual bool get_input_parameter(TNParameter, DIMParameter, int*);
   virtual bool get_int_parameter(PMParameter, int*);
-  //virtual bool get_float_parameter(PMParameter, float*);
+  virtual bool get_float_parameter(PMParameter, float*);
   //virtual bool get_ints_parameter(PMParameter, std::vector<int>*);
   virtual void forward(bool block = false) = 0;
   virtual void map(void) = 0;
@@ -467,6 +480,9 @@ public:
   Model *model;
   OpType type;
   float runtime;
+#ifdef USE_DNNL
+  DNNLNet net;
+#endif
 };
 
 class Graph {
@@ -493,7 +509,8 @@ public:
                          const TensorHandle _scale,
                          const TensorHandle _bias,
                          const TensorHandle _mean,
-                         const TensorHandle _var);
+                         const TensorHandle _var,
+                         float _epsilon);
   TensorHandle cast(const TensorHandle _input, DataType _datatype);
   TensorHandle ceil(const TensorHandle _input);
   TensorHandle concat(int axis, int n, const TensorHandle* _inputs);
@@ -519,6 +536,21 @@ public:
   TensorHandle fc(const TensorHandle _input,
                   int _outputC,
                   ActiMode _actiMode = AC_MODE_NONE);
+  TensorHandle fuse_conv_batchnorm(const TensorHandle _conv_w,
+                                   const TensorHandle _scale,
+                                   const TensorHandle _bias,
+                                   const TensorHandle _mean,
+                                   const TensorHandle _var);
+  // TensorHandle fuse_conv_batchnorm_alpha_var(const TensorHandle _conv_w,
+  //                                  const TensorHandle _scale,
+  //                                  const TensorHandle _var);
+  TensorHandle fuse_conv_batchnorm_bias(const TensorHandle _scale,
+                                   const TensorHandle _bias,
+                                   const TensorHandle _mean,
+                                   const TensorHandle _var);
+  TensorHandle broadcast_add(const TensorHandle _data,
+                                   const TensorHandle _bias);
+
   TensorHandle leakyrelu(const TensorHandle _input, float _alpha,
                          bool _inplace=true);
   TensorHandle log(const TensorHandle _input);
@@ -614,6 +646,7 @@ public:
   int get_input_edges(Edge* opList, size_t guid);
   OpType get_operator_type(size_t guid);
   int get_operator_int_attr(size_t guid, PMParameter attr);
+  float get_operator_float_attr(size_t guid, PMParameter attr);
   int get_num_outputs(size_t guid);
   int get_input_dims(size_t guid, int* dims, int idx);
   void get_weight_value(size_t guid, DATATYPE* value);
@@ -683,11 +716,6 @@ public:
   cudnnConvolutionDescriptor_t convDesc;
   cudnnConvolutionFwdAlgo_t fwdAlgo;
 #endif
-#ifdef USE_MKL
-  std::vector<dnnPrimitive_t> compList;
-  std::vector<std::array<void*, dnnResourceNumber>> rsrcList;
-  int fwdAlgo; // Placeholder, should never use this in mkl.
-#endif
   int strideH, strideW;
   PaddingMode padding;
   ActiMode activation;
@@ -703,6 +731,7 @@ public:
   void map(void);
   void unmap(void);
   bool get_int_parameter(PMParameter para, int*);
+  void set_layout(void);
   void collect_costs(float& exe_time, float& flops, float& mem_acc, int& num_kernels);
 public:
   int outputC;
@@ -710,6 +739,22 @@ public:
 #ifdef USE_CUDNN
   cudnnTensorDescriptor_t outputTensor;
   cudnnActivationDescriptor_t actiDesc;
+#endif
+#ifdef USE_DNNL
+#ifdef DNNL_NO_MATMUL
+  struct BLASGEMMParams {
+    int batch;
+    int m;
+    int n;
+    int k;
+    char transA;
+    char transB;
+    int lda;
+    int ldb;
+    int ldc;
+  };
+  BLASGEMMParams params;
+#endif
 #endif
 };
 
@@ -744,10 +789,6 @@ public:
   cudnnActivationDescriptor_t actiDesc;
   cudnnPoolingDescriptor_t poolDesc;
 #endif
-#ifdef USE_MKL
-  std::vector<dnnPrimitive_t> compList;
-  std::vector<std::array<void*, dnnResourceNumber>> rsrcList;
-#endif
   int kernelH, kernelW, strideH, strideW;
   PaddingMode padding;
   ActiMode activation;
@@ -772,21 +813,24 @@ public:
 
 class BatchNorm : public OpBase {
 public:
-  BatchNorm(Model* _model, Tensor _input, Tensor _scale,
-            Tensor _bias, Tensor _mean, Tensor _var);
+  BatchNorm(Model* _model, const Tensor& _input, const Tensor& _scale,
+            const Tensor& _bias, const Tensor& _mean, const Tensor& _var,
+            const float _epsilon);
   ~BatchNorm(void);
   bool get_int_parameter(PMParameter para, int*);
+  bool get_float_parameter(PMParameter para, float*);
+  float get_min_epsilon(void);
   void forward(bool block);
   void map(void);
   void unmap(void);
   void collect_costs(float& exe_time, float& flops, float& mem_acc, int& num_kernels);
 public:
+  float epsilon;
 #ifdef USE_CUDNN
   cudnnTensorDescriptor_t inputTensor, biasTensor, outputTensor;
 #endif
-#ifdef USE_MKL
-  dnnPrimitive_t comp;
-  std::array<void*, dnnResourceNumber> rsrc;
+#ifdef USE_DNNL
+  void* scaleShiftPtr;
 #endif
   //DATATYPE *biasPtr, *scalePtr, *runningMean, *runningVar, *saveMean, *saveVar;
 };
@@ -820,7 +864,7 @@ class Element : public OpBase {
 public:
   Element(Model* _model, OpType _type, const Tensor& _t1, const Tensor& _t2);
   ~Element(void);
-  bool has_cudnn_kernel(void) const;
+  bool use_kernel(void) const;
   bool get_int_parameter(PMParameter para, int*);
   void forward(bool block);
   void map(void);
@@ -837,6 +881,7 @@ class ElementWiseUnary : public OpBase {
 public:
   ElementWiseUnary(Model* _model, const Tensor& _input, OpType _type);
   ~ElementWiseUnary(void);
+  bool use_kernel(void) const;
   bool get_int_parameter(PMParameter para, int*);
   void forward(bool block);
   void map(void);
@@ -855,20 +900,50 @@ public:
   void collect_costs(float& exe_time, float& flops, float& mem_acc, int& num_kernels);
 };
 
-class TopK : public OpBase {
+class FuseConvBatchNorm : public OpBase {
 public:
-  TopK(Model* _model, const Tensor& _input,
-       int _axis, int _numk,
-       bool _largest, bool _sorted);
-  ~TopK(void);
+  FuseConvBatchNorm(Model* _model, const Tensor& _conv_w, const Tensor& _scale,
+                    const Tensor& _bias, const Tensor& _mean, const Tensor& _var);
+  ~FuseConvBatchNorm(void);
   bool get_int_parameter(PMParameter para, int*);
   void forward(bool block);
   void map(void);
   void unmap(void);
   void collect_costs(float& exe_time, float& flops, float& mem_acc, int& num_kernels);
+};
+
+class FuseConvBatchNormAlphaVar : public OpBase {
 public:
-  int axis;
-  bool largest, sorted;
+  FuseConvBatchNormAlphaVar(Model* _model, const Tensor& _conv_w, const Tensor& _scale, const Tensor& _var);
+  ~FuseConvBatchNormAlphaVar(void);
+  bool get_int_parameter(PMParameter para, int*);
+  void forward(bool block);
+  void map(void);
+  void unmap(void);
+  void collect_costs(float& exe_time, float& flops, float& mem_acc, int& num_kernels);
+};
+
+class FuseConvBatchNormBias : public OpBase {
+public:
+  FuseConvBatchNormBias(Model* _model, const Tensor& _scale,
+                    const Tensor& _bias, const Tensor& _mean, const Tensor& _var);
+  ~FuseConvBatchNormBias(void);
+  bool get_int_parameter(PMParameter para, int*);
+  void forward(bool block);
+  void map(void);
+  void unmap(void);
+  void collect_costs(float& exe_time, float& flops, float& mem_acc, int& num_kernels);
+};
+
+class BroadcastAdd : public OpBase {
+public:
+  BroadcastAdd(Model* _model, const Tensor& _data, const Tensor& _bias);
+  ~BroadcastAdd(void);
+  bool get_int_parameter(PMParameter para, int*);
+  void forward(bool block);
+  void map(void);
+  void unmap(void);
+  void collect_costs(float& exe_time, float& flops, float& mem_acc, int& num_kernels);
 };
 
 class MergeGConv : public OpBase {
@@ -1006,6 +1081,22 @@ public:
   std::vector<int> axes;
 };
 
+class TopK : public OpBase {
+public:
+  TopK(Model* _model, const Tensor& _input,
+       int _axis, int _numk,
+       bool _largest, bool _sorted);
+  ~TopK(void);
+  bool get_int_parameter(PMParameter para, int*);
+  void forward(bool block);
+  void map(void);
+  void unmap(void);
+  void collect_costs(float& exe_time, float& flops, float& mem_acc, int& num_kernels);
+public:
+  int axis;
+  bool largest, sorted;
+};
+
 class Transpose : public OpBase {
 public:
   Transpose(Model* _model, Tensor _input,
@@ -1065,7 +1156,7 @@ struct ActivationKey {
 // key is (inputN, inputC, inputH, inputW)
 struct BatchNormKey {
   static const int KEY_LENGTH = Tensor::MAX_KEY_LENGTH;
-  BatchNormKey(Tensor);
+  BatchNormKey(const Tensor& _input);
   int keys[KEY_LENGTH];
 };
 
@@ -1114,6 +1205,30 @@ struct EnlargeKey {
   int keys[KEY_LENGTH];
 };
 
+struct FuseConvBatchNormKey {
+  static const int KEY_LENGTH = Tensor::MAX_KEY_LENGTH;
+  FuseConvBatchNormKey(const Tensor& conv_w);
+  int keys[KEY_LENGTH];
+};
+
+struct FuseConvBatchNormBiasKey {
+  static const int KEY_LENGTH = Tensor::MAX_KEY_LENGTH;
+  FuseConvBatchNormBiasKey(const Tensor& _scale);
+  int keys[KEY_LENGTH];
+};
+
+struct FuseConvBatchNormAlphaVarKey {
+  static const int KEY_LENGTH = Tensor::MAX_KEY_LENGTH;
+  FuseConvBatchNormAlphaVarKey(const Tensor& conv_w);
+  int keys[KEY_LENGTH];
+};
+
+struct BroadcastAddKey {
+  static const int KEY_LENGTH = Tensor::MAX_KEY_LENGTH;
+  BroadcastAddKey(const Tensor& data);
+  int keys[KEY_LENGTH];
+};
+
 struct TopKKey {
   static const int KEY_LENGTH = Tensor::MAX_KEY_LENGTH + 4;
   TopKKey(const Tensor& _input, int _axis, int _numk, bool _largest, bool _sorted);
@@ -1156,7 +1271,7 @@ struct PadKey {
   int keys[KEY_LENGTH];
 };
 
-// keys are (inputN, inputC, inputH, inputW, kernelH, kernelW,              
+// keys are (inputN, inputC, inputH, inputW, kernelH, kernelW,
 //           strideH, strideW, padding, activation, type,
 //           input.split[0], input.split[1]
 struct Pool2DKey {
@@ -1235,8 +1350,12 @@ public:
   Model();
   Op get_or_create_activation(Tensor _input, OpType _type,
                               bool _inPlace);
-  Op get_or_create_batchnorm(Tensor _input, Tensor _scale, Tensor _bias,
-                             Tensor _mean, Tensor _var);
+  Op get_or_create_batchnorm(const Tensor& _input,
+                             const Tensor& _scale,
+                             const Tensor& _bias,
+                             const Tensor& _mean,
+                             const Tensor& _var,
+                             const float _epsilon);
   Op get_or_create_cast(const Tensor& _input, DataType _datatype);
   Op get_or_create_concat(int axis, int n, Tensor* _inputs, bool* _needCopy);
   Op get_or_create_constant(int ndim, int* dims, OpType type);
@@ -1247,6 +1366,20 @@ public:
   Op get_or_create_element(OpType type, const Tensor& t1, const Tensor& t2);
   Op get_or_create_elementwise_unary(const Tensor& _input, OpType _type);
   Op get_or_create_enlarge(Tensor _w1, Tensor _w2);
+  Op get_or_create_fuse_conv_batchnorm(const Tensor& _conv_w,
+                                       const Tensor& _scale,
+                                       const Tensor& _bias,
+                                       const Tensor& _mean,
+                                       const Tensor& _var);
+  Op get_or_create_fuse_conv_batchnorm_alpha_var(const Tensor& _conv_w,
+                                       const Tensor& _scale,
+                                       const Tensor& _var);
+  Op get_or_create_fuse_conv_batchnorm_bias(const Tensor& _scale,
+                                       const Tensor& _bias,
+                                       const Tensor& _mean,
+                                       const Tensor& _var);
+  Op get_or_create_broadcast_add(const Tensor& _data,
+                                 const Tensor& _bias);
   Op get_or_create_matmul(Tensor _input, Tensor _weight,
                           ActiMode _actimode);
   Op get_or_create_mul(const Tensor& x,
@@ -1338,6 +1471,11 @@ public:
   // variables for element wise
   cudnnOpTensorDescriptor_t opDesc;
 #endif
+#ifdef USE_DNNL
+  DNNLNet net;
+  dnnl::engine eng;
+  dnnl::stream strm;
+#endif
   std::map<ActivationKey, Activation*, KeyCompare<ActivationKey> > activation;
   std::map<BatchNormKey, BatchNorm*, KeyCompare<BatchNormKey> > batchnorm;
   std::map<CastKey, Cast*, KeyCompare<CastKey> > cast;
@@ -1347,6 +1485,10 @@ public:
   std::map<ElementKey, Element*, KeyCompare<ElementKey> > element;
   std::map<ElementWiseUnaryKey, ElementWiseUnary*, KeyCompare<ElementWiseUnaryKey> > element_unary;
   std::map<EnlargeKey, Enlarge*, KeyCompare<EnlargeKey> > enlarge;
+  std::map<FuseConvBatchNormKey, FuseConvBatchNorm*, KeyCompare<FuseConvBatchNormKey> > fuse_conv_batchnorm;
+  std::map<FuseConvBatchNormAlphaVarKey, FuseConvBatchNormAlphaVar*, KeyCompare<FuseConvBatchNormAlphaVarKey> > fuse_conv_batchnorm_alpha_var;
+  std::map<FuseConvBatchNormBiasKey, FuseConvBatchNormBias*, KeyCompare<FuseConvBatchNormBiasKey> > fuse_conv_batchnorm_bias;
+  std::map<BroadcastAddKey, BroadcastAdd*, KeyCompare<BroadcastAddKey> > broadcast_add;
   std::map<MatmulKey, Matmul*, KeyCompare<MatmulKey> > matmul;
   std::map<MergeGConvKey, MergeGConv*, KeyCompare<MergeGConvKey> > merge_gconv;
   std::map<MulKey, Mul*, KeyCompare<MulKey> > mul;

@@ -1,4 +1,4 @@
-/* Copyright 2018 Stanford
+/* Copyright 2020 Stanford
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,11 @@
 #include "taso/ops.h"
 #include "taso/cuda_helper.h"
 using namespace taso;
+
+float BatchNorm::get_min_epsilon(void)
+{
+  return CUDNN_BN_MIN_EPSILON;
+}
 
 void BatchNorm::map(void)
 {
@@ -67,14 +72,15 @@ void BatchNorm::unmap(void)
   checkCUDA(cudaFree(saveVar));
   checkCUDA(cudaFree(biasPtr));
   checkCUDA(cudaFree(scalePtr));
-  checkCUDA(cudaFree(outputs[0].data_ptr));
 #endif
+  checkCUDA(cudaFree(outputs[0].data_ptr));
 }
 
 void BatchNorm::forward(bool block)
 {
   const float alpha = 1.0f;
   const float beta = 0.0f;
+  const float eps = epsilon;
   cudnnBatchNormMode_t mode = CUDNN_BATCHNORM_SPATIAL;
   //int inputC = inputs[0].dim[1];
 #ifdef DO_TRAINING 
@@ -86,13 +92,13 @@ void BatchNorm::forward(bool block)
     checkCUDNN(cudnnBatchNormalizationForwardTraining(
       model->dnn, mode, &alpha, &beta, inputTensor, inputs[0].data_ptr,
       outputTensor, outputs[0].data_ptr, biasTensor, scalePtr, biasPtr,
-      1.0, runningMean, runningVar, CUDNN_BN_MIN_EPSILON, saveMean, saveVar));
+      1.0, runningMean, runningVar, eps, saveMean, saveVar));
   } else {
 #endif
     checkCUDNN(cudnnBatchNormalizationForwardInference(
       model->dnn, mode, &alpha, &beta, inputTensor, inputs[0].data_ptr,
       outputTensor, outputs[0].data_ptr, biasTensor, inputs[1].data_ptr, inputs[2].data_ptr,
-      inputs[3].data_ptr, inputs[4].data_ptr, CUDNN_BN_MIN_EPSILON)); 
+      inputs[3].data_ptr, inputs[4].data_ptr, eps));
 #ifdef DO_TRAINING 
   }
 #endif
@@ -104,14 +110,15 @@ void Model::measure_batchnorm_cost(BatchNorm* bn)
 {
   const float alpha = 1.0f;
   const float beta = 0.0f;
+  int inputN = bn->inputs[0].dim[0];
   int inputC = bn->inputs[0].dim[1];
   int inputH = bn->inputs[0].dim[2];
   int inputW = bn->inputs[0].dim[3];
   cudnnBatchNormMode_t mode = CUDNN_BATCHNORM_SPATIAL;
   checkCUDNN(cudnnSetTensor4dDescriptor(inputTensor, CUDNN_TENSOR_NCHW,
-      CUDNN_DATA_FLOAT, BATCH_SIZE, inputC, inputH, inputW));
+      CUDNN_DATA_FLOAT, inputN, inputC, inputH, inputW));
   checkCUDNN(cudnnSetTensor4dDescriptor(outputTensor, CUDNN_TENSOR_NCHW,
-      CUDNN_DATA_FLOAT, BATCH_SIZE, inputC, inputH, inputW));
+      CUDNN_DATA_FLOAT, inputN, inputC, inputH, inputW));
   checkCUDNN(cudnnSetTensor4dDescriptor(biasTensor, CUDNN_TENSOR_NCHW,
       CUDNN_DATA_FLOAT, 1, inputC, 1, 1));
 #ifdef DO_TRAINING
@@ -149,8 +156,8 @@ void Model::measure_batchnorm_cost(BatchNorm* bn)
   float milliseconds;
   cudaEventElapsedTime(&milliseconds, startEvent, endEvent);
   bn->runtime = milliseconds / REPEAT_TIMES;
-  printf("measure[BatchNorm]: i(%d %d %d %d) cost(%.4lf)\n",
-         BATCH_SIZE, bn->inputs[0].dim[1], bn->inputs[0].dim[2],
-         bn->inputs[0].dim[3], bn->runtime);
+  if (print_cost)
+    printf("measure[BatchNorm]: i(%d %d %d %d) cost(%.4lf)\n",
+           inputN, inputC, inputH, inputW, bn->runtime);
 }
 
