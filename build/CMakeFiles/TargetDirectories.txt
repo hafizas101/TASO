@@ -1,0 +1,7 @@
+/usr/TASO/build/CMakeFiles/install/strip.dir
+/usr/TASO/build/CMakeFiles/install/local.dir
+/usr/TASO/build/CMakeFiles/edit_cache.dir
+/usr/TASO/build/CMakeFiles/taso_runtime.dir
+/usr/TASO/build/CMakeFiles/rebuild_cache.dir
+/usr/TASO/build/CMakeFiles/list_install_components.dir
+/usr/TASO/build/CMakeFiles/install.dir

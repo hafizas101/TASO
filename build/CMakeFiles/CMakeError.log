@@ -1,0 +1,51 @@
+Determining if the pthread_create exist failed with the following output:
+Change Dir: /usr/TASO/build/CMakeFiles/CMakeTmp
+
+Run Build Command(s):/opt/conda/bin/make cmTC_acefd/fast 
+/opt/conda/bin/make -f CMakeFiles/cmTC_acefd.dir/build.make CMakeFiles/cmTC_acefd.dir/build
+make[1]: Entering directory '/usr/TASO/build/CMakeFiles/CMakeTmp'
+Building CXX object CMakeFiles/cmTC_acefd.dir/CheckSymbolExists.cxx.o
+/usr/bin/c++     -o CMakeFiles/cmTC_acefd.dir/CheckSymbolExists.cxx.o -c /usr/TASO/build/CMakeFiles/CMakeTmp/CheckSymbolExists.cxx
+Linking CXX executable cmTC_acefd
+/opt/conda/bin/cmake -E cmake_link_script CMakeFiles/cmTC_acefd.dir/link.txt --verbose=1
+/usr/bin/c++       -rdynamic CMakeFiles/cmTC_acefd.dir/CheckSymbolExists.cxx.o  -o cmTC_acefd 
+CMakeFiles/cmTC_acefd.dir/CheckSymbolExists.cxx.o: In function `main':
+CheckSymbolExists.cxx:(.text+0x16): undefined reference to `pthread_create'
+collect2: error: ld returned 1 exit status
+make[1]: *** [CMakeFiles/cmTC_acefd.dir/build.make:87: cmTC_acefd] Error 1
+make[1]: Leaving directory '/usr/TASO/build/CMakeFiles/CMakeTmp'
+make: *** [Makefile:121: cmTC_acefd/fast] Error 2
+
+File /usr/TASO/build/CMakeFiles/CMakeTmp/CheckSymbolExists.cxx:
+/* */
+#include <pthread.h>
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef pthread_create
+  return ((int*)(&pthread_create))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+
+Determining if the function pthread_create exists in the pthreads failed with the following output:
+Change Dir: /usr/TASO/build/CMakeFiles/CMakeTmp
+
+Run Build Command(s):/opt/conda/bin/make cmTC_1f3ba/fast 
+/opt/conda/bin/make -f CMakeFiles/cmTC_1f3ba.dir/build.make CMakeFiles/cmTC_1f3ba.dir/build
+make[1]: Entering directory '/usr/TASO/build/CMakeFiles/CMakeTmp'
+Building CXX object CMakeFiles/cmTC_1f3ba.dir/CheckFunctionExists.cxx.o
+/usr/bin/c++    -DCHECK_FUNCTION_EXISTS=pthread_create   -o CMakeFiles/cmTC_1f3ba.dir/CheckFunctionExists.cxx.o -c /usr/TASO/build/CMakeFiles/CheckLibraryExists/CheckFunctionExists.cxx
+Linking CXX executable cmTC_1f3ba
+/opt/conda/bin/cmake -E cmake_link_script CMakeFiles/cmTC_1f3ba.dir/link.txt --verbose=1
+/usr/bin/c++   -DCHECK_FUNCTION_EXISTS=pthread_create    -rdynamic CMakeFiles/cmTC_1f3ba.dir/CheckFunctionExists.cxx.o  -o cmTC_1f3ba -lpthreads 
+/usr/bin/ld: cannot find -lpthreads
+collect2: error: ld returned 1 exit status
+make[1]: *** [CMakeFiles/cmTC_1f3ba.dir/build.make:87: cmTC_1f3ba] Error 1
+make[1]: Leaving directory '/usr/TASO/build/CMakeFiles/CMakeTmp'
+make: *** [Makefile:121: cmTC_1f3ba/fast] Error 2
+
+
