@@ -20,4 +20,7 @@ new_graph = taso.optimize(graph)
 onnx_model = taso.export_onnx(new_graph)
 onnx.save(onnx_model, "optimised.onnx")
 
+print("Original Graph cost: "+str(graph.run_time()))
+print("Optimised Graph cost: "+str(new_graph.run_time())
+
 
