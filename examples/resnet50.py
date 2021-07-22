@@ -40,4 +40,4 @@ for i in range(3):
 new_graph = ts.optimize(graph, alpha=1.0, budget=1000)
 #onnx_model = ts.export_onnx(new_graph)
 print(graph.run_time())
-print(new_graph.run_time()
+print(new_graph.run_time())
