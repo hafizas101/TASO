@@ -94,3 +94,6 @@ new_graph = ts.optimize(graph, alpha=1.0, budget=100)
 onnx_model = ts.export_onnx(new_graph)
 onnx.checker.check_model(onnx_model)
 onnx.save(onnx_model, "nasneta_taso.onnx")
+
+print(graph.run_time())
+print(new_graph.run_time())
