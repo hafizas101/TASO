@@ -15,4 +15,4 @@ print("Optimised Graph cost: "+str(new_graph.run_time()))
 
 onnx_model = taso.export_onnx(new_graph)
 onnx.checker.check_model(onnx_model)
-onnx.save(onnx_model, "{}.taso.onnx".format(args.file))
+onnx.save(onnx_model, "optimised_{}".format(args.file))
