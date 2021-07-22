@@ -135,7 +135,7 @@ def inception_v3(batch_size=1):
     v = inception_logits(graph, v)
     return graph
 
-graph = inception_v3(batch_size=32)  # change batch_size from 4 to 8 would cause error.
+graph = inception_v3(batch_size=12)  # change batch_size from 4 to 8 would cause error.
 opt_graph = taso.optimize(graph, alpha=1.0, budget=30)
 
 print(graph.run_time())
